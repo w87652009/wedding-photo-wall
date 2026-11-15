@@ -17,16 +17,16 @@
 
 window.APP_CONFIG = {
   // 例：https://script.google.com/macros/s/AKfycbxxxxxxxxxxxx/exec
-  API_URL: 'PASTE_YOUR_GAS_WEB_APP_URL_HERE',
+  API_URL: 'https://script.google.com/macros/s/AKfycbwC3bkCfJu1aINv2EgyqoIoWa74nnvp_W1WqanpnS-z1V0R198wf9LIxMh2pI_TDDqp6w/exec',
 
   // 投影端（大螢幕、新娘休息室平板）
-  TOKEN_PROJECTOR: 'PASTE_PROJECTOR_TOKEN_HERE',
+  TOKEN_PROJECTOR: 'wcBFlZD3JLLG1O6hJKS9cxKoudWZRbKW',
 
   // 管理端（新郎新娘）
-  TOKEN_ADMIN: 'PASTE_ADMIN_TOKEN_HERE',
+  TOKEN_ADMIN: 'Q4OHM746qxmUf6wLZcUErkcCkFRZ6zov',
 
   // 審核端（伴娘伴郎）
-  TOKEN_REVIEWER: 'PASTE_REVIEWER_TOKEN_HERE',
+  TOKEN_REVIEWER: 'VJ1Yu9YE9Es0dsMa3vLPKXBCzpHTg43f',
 
   // 輪詢間隔（秒）。10 秒是安全值，不要低於 10。
   POLL_SECONDS: 10,
@@ -38,6 +38,6 @@ window.APP_CONFIG = {
   INSERT_AFTER: 0,
 
   // 婚禮資訊（投影端標題用）
-  COUPLE_NAMES: '新郎 & 新娘',
+  COUPLE_NAMES: '于舜 & 孟夏',
   WEDDING_DATE_TEXT: '2027.05.15'
 };
