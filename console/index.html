@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0f0a16">
+<title>婚禮照片牆 · 管理端</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<!-- ===== 登入 ===== -->
+<div class="gate" id="gate">
+  <div class="box">
+    <h1>💐 管理端</h1>
+    <p>新郎與新娘專用<br>可審核、刪除、暫停播放、切換免審核模式</p>
+    <input type="password" id="tokenInput" placeholder="請輸入管理端存取碼" autocomplete="current-password">
+    <div class="err" id="gateErr"></div>
+    <button class="btn primary block" id="gateBtn">進入控制台</button>
+  </div>
+</div>
+
+<!-- ===== 主畫面 ===== -->
+<div class="topbar">
+  <div class="brand">
+    <div class="logo">💐</div>
+    <div>
+      管理端
+      <small>WEDDING PHOTO WALL</small>
+    </div>
+  </div>
+  <div class="status-pill" id="statusPill">
+    <span class="dot" id="statusDot"></span>
+    <span id="statusText">連線中</span>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <!-- 統計 -->
+  <div class="section-title">
+    <h2>即時概況</h2>
+    <span class="count" id="updatedAt">—</span>
+  </div>
+  <div class="stats" id="stats">
+    <div class="stat pending"><div class="n" id="sPending">–</div><div class="l">待審核</div></div>
+    <div class="stat approved"><div class="n" id="sApproved">–</div><div class="l">已上牆</div></div>
+    <div class="stat processing"><div class="n" id="sProcessing">–</div><div class="l">處理中</div></div>
+    <div class="stat rejected"><div class="n" id="sRejected">–</div><div class="l">已退回</div></div>
+    <div class="stat"><div class="n" id="sTotal">–</div><div class="l">總計</div></div>
+  </div>
+
+  <!-- 控制 -->
+  <div class="section-title"><h2>播放與審核控制</h2></div>
+  <div class="card">
+    <div class="switch-row">
+      <div class="info">
+        <div class="t">投影播放</div>
+        <div class="d" id="playbackDesc">目前播放中</div>
+      </div>
+      <div class="switch on" id="swPlayback" role="switch" aria-checked="true"></div>
+    </div>
+
+    <div class="switch-row">
+      <div class="info">
+        <div class="t">免審核模式</div>
+        <div class="d" id="reviewModeDesc">關閉中：照片需審核後才上牆</div>
+      </div>
+      <div class="switch" id="swReviewMode" role="switch" aria-checked="false"></div>
+    </div>
+
+    <div class="switch-row" style="display:block;">
+      <div class="info" style="margin-bottom:10px;">
+        <div class="t">投影跑馬燈</div>
+        <div class="d">顯示在投影畫面底部，例如「請往 3 號桌入座」</div>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <input type="text" id="announceInput" placeholder="輸入要顯示的文字（留空則關閉）"
+               style="flex:1; padding:11px 14px; background:rgba(0,0,0,.3); border:1px solid var(--line); border-radius:11px; color:var(--text); font-size:14px; font-family:inherit; outline:none;">
+        <button class="btn sm" id="announceBtn">送出</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 待審清單 -->
+  <div class="section-title">
+    <h2>待審核照片</h2>
+    <span class="count" id="pendingCount">0 張</span>
+  </div>
+  <div id="pendingList"></div>
+
+  <!-- 已上牆 -->
+  <div class="section-title">
+    <h2>已上牆照片</h2>
+    <span class="count" id="approvedCount">0 張</span>
+  </div>
+  <div id="approvedList"></div>
+
+</div>
+
+<!-- 底部操作 -->
+<div class="dock">
+  <button class="btn" id="refreshBtn">↻ 重新整理</button>
+  <button class="btn primary" id="openProjector">開啟投影畫面</button>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="../config.js"></script>
+<script src="../assets/api.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var cfg = window.APP_CONFIG || {};
+  var API = window.WeddingAPI;
+  var TOKEN_KEY = 'wedding_admin_token';
+
+  var token = '';
+  var state = {
+    playback: 'playing',
+    reviewMode: 'manual',
+    pending: [],
+    approved: [],
+    busy: false,
+    timer: null
+  };
+
+  var el = {
+    gate: document.getElementById('gate'),
+    gateBtn: document.getElementById('gateBtn'),
+    gateErr: document.getElementById('gateErr'),
+    tokenInput: document.getElementById('tokenInput'),
+    statusDot: document.getElementById('statusDot'),
+    statusText: document.getElementById('statusText'),
+    updatedAt: document.getElementById('updatedAt'),
+    sPending: document.getElementById('sPending'),
+    sApproved: document.getElementById('sApproved'),
+    sProcessing: document.getElementById('sProcessing'),
+    sRejected: document.getElementById('sRejected'),
+    sTotal: document.getElementById('sTotal'),
+    swPlayback: document.getElementById('swPlayback'),
+    swReviewMode: document.getElementById('swReviewMode'),
+    playbackDesc: document.getElementById('playbackDesc'),
+    reviewModeDesc: document.getElementById('reviewModeDesc'),
+    announceInput: document.getElementById('announceInput'),
+    announceBtn: document.getElementById('announceBtn'),
+    pendingList: document.getElementById('pendingList'),
+    approvedList: document.getElementById('approvedList'),
+    pendingCount: document.getElementById('pendingCount'),
+    approvedCount: document.getElementById('approvedCount'),
+    refreshBtn: document.getElementById('refreshBtn'),
+    openProjector: document.getElementById('openProjector'),
+    toast: document.getElementById('toast')
+  };
+
+  /* ---------- 提示 ---------- */
+  var toastTimer = null;
+  function toast(msg, type) {
+    el.toast.textContent = msg;
+    el.toast.className = 'toast show' + (type ? ' ' + type : '');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.toast.className = 'toast'; }, 2600);
+  }
+
+  /* ---------- 連線狀態 ---------- */
+  function setStatus(ok, text) {
+    el.statusDot.className = 'dot' + (ok ? '' : ' off');
+    el.statusText.textContent = text;
+  }
+
+  /* ---------- 登入 ---------- */
+  function showGate(msg) {
+    el.gate.classList.remove('hidden');
+    el.gateErr.textContent = msg || '';
+  }
+
+  function tryToken(t) {
+    return API.getStats(t).then(function (res) {
+      token = t;
+      try { localStorage.setItem(TOKEN_KEY, t); } catch (e) {}
+      el.gate.classList.add('hidden');
+      applyStats(res);
+      return loadAll();
+    });
+  }
+
+  el.gateBtn.addEventListener('click', function () {
+    var t = el.tokenInput.value.trim();
+    if (!t) { el.gateErr.textContent = '請輸入存取碼'; return; }
+    el.gateBtn.disabled = true;
+    el.gateErr.textContent = '';
+    tryToken(t).catch(function (err) {
+      el.gateErr.textContent = '存取碼錯誤或後端未連線';
+      el.gateBtn.disabled = false;
+    });
+  });
+
+  el.tokenInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') el.gateBtn.click();
+  });
+
+  /* ---------- 統計 ---------- */
+  function applyStats(s) {
+    el.sPending.textContent = s.pending || 0;
+    el.sApproved.textContent = s.approved || 0;
+    el.sProcessing.textContent = (s.processing || 0) + (s.awaiting_text || 0);
+    el.sRejected.textContent = s.rejected || 0;
+    el.sTotal.textContent = s.total || 0;
+    el.updatedAt.textContent = '更新於 ' + new Date().toLocaleTimeString('zh-TW', { hour12: false });
+  }
+
+  /* ---------- 開關狀態 ---------- */
+  function applySwitches(playback, reviewMode) {
+    state.playback = playback;
+    state.reviewMode = reviewMode;
+
+    var playing = playback !== 'paused';
+    el.swPlayback.classList.toggle('on', playing);
+    el.swPlayback.setAttribute('aria-checked', playing ? 'true' : 'false');
+    el.playbackDesc.textContent = playing ? '目前播放中' : '已暫停（所有端同步）';
+
+    var auto = reviewMode === 'auto';
+    el.swReviewMode.classList.toggle('on', auto);
+    el.swReviewMode.setAttribute('aria-checked', auto ? 'true' : 'false');
+    el.reviewModeDesc.textContent = auto
+      ? '開啟中：照片直接上牆，不需審核'
+      : '關閉中：照片需審核後才上牆';
+  }
+
+  /* ---------- 載入資料 ---------- */
+  function loadAll() {
+    if (!token) return Promise.resolve();
+
+    return Promise.all([
+      API.getStats(token),
+      API.getPending(token, true),
+      API.getPhotos(token, { since: 0, version: '' })
+    ]).then(function (results) {
+      setStatus(true, '已連線');
+      applyStats(results[0]);
+
+      var pendingRes = results[1];
+      var photosRes = results[2];
+
+      state.pending = (pendingRes.items || []).filter(function (p) {
+        return p.status === 'pending' || p.status === 'rejected';
+      });
+      state.approved = (photosRes.photos || []).slice().reverse();
+
+      renderPending();
+      renderApproved();
+    }).catch(function (err) {
+      setStatus(false, '連線失敗');
+      throw err;
+    });
+  }
+
+  /* ---------- 渲染：待審 ---------- */
+  function renderPending() {
+    el.pendingCount.textContent = state.pending.length + ' 張';
+
+    if (!state.pending.length) {
+      el.pendingList.innerHTML =
+        '<div class="empty"><div class="icon">✅</div>' +
+        '<div class="t">目前沒有待審照片</div>' +
+        '<div class="d">賓客上傳後會自動出現在這裡</div></div>';
+      return;
+    }
+
+    var html = '<div class="grid">';
+    state.pending.forEach(function (p) {
+      var isRejected = p.status === 'rejected';
+      html +=
+        '<div class="photo-card' + (isRejected ? ' rejected' : '') + '" data-id="' + API.esc(p.id) + '">' +
+          '<div class="thumb">' +
+            '<img src="' + API.esc(p.url || p.fallbackUrl) + '" alt="" loading="lazy" ' +
+                 'onerror="this.src=\'' + API.esc(p.fallbackUrl || '') + '\'">' +
+            '<span class="badge ' + (isRejected ? 'rejected' : 'pending') + '">' +
+              (isRejected ? '已退回' : '待審核') + '</span>' +
+          '</div>' +
+          '<div class="body">' +
+            '<div class="msg">' + API.esc(p.message || '（無祝福文字）') + '</div>' +
+            '<div class="meta">' +
+              '<span>' + API.esc(p.signer || '') + '</span>' +
+              '<span>' + API.timeAgo(p.createdAt) + '</span>' +
+            '</div>' +
+            '<div class="actions">' +
+              (isRejected
+                ? '<button class="btn sm green" data-act="approve">通過</button>' +
+                  '<button class="btn sm red" data-act="delete">刪除</button>'
+                : '<button class="btn sm green" data-act="approve">通過</button>' +
+                  '<button class="btn sm red" data-act="reject">退回</button>') +
+            '</div>' +
+          '</div>' +
+        '</div>';
+    });
+    html += '</div>';
+    el.pendingList.innerHTML = html;
+  }
+
+  /* ---------- 渲染：已上牆 ---------- */
+  function renderApproved() {
+    el.approvedCount.textContent = state.approved.length + ' 張';
+
+    if (!state.approved.length) {
+      el.approvedList.innerHTML =
+        '<div class="empty"><div class="icon">🖼️</div>' +
+        '<div class="t">還沒有照片上牆</div>' +
+        '<div class="d">審核通過後就會出現在這裡</div></div>';
+      return;
+    }
+
+    var html = '<div class="grid">';
+    state.approved.forEach(function (p) {
+      html +=
+        '<div class="photo-card" data-id="' + API.esc(p.id) + '">' +
+          '<div class="thumb">' +
+            '<img src="' + API.esc(p.url || p.fallbackUrl) + '" alt="" loading="lazy" ' +
+                 'onerror="this.src=\'' + API.esc(p.fallbackUrl || '') + '\'">' +
+            '<span class="badge approved">已上牆</span>' +
+          '</div>' +
+          '<div class="body">' +
+            '<div class="msg">' + API.esc(p.message || '（無祝福文字）') + '</div>' +
+            '<div class="meta">' +
+              '<span>' + API.esc(p.signer || '') + '</span>' +
+              '<span>#' + p.seq + '</span>' +
+            '</div>' +
+            '<div class="actions">' +
+              '<button class="btn sm" data-act="unapprove">下架</button>' +
+              '<button class="btn sm red" data-act="delete">刪除</button>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+    });
+    html += '</div>';
+    el.approvedList.innerHTML = html;
+  }
+
+  /* ---------- 卡片操作（事件委派） ---------- */
+  function handleCardClick(e) {
+    var btn = e.target.closest('button[data-act]');
+    if (!btn) return;
+
+    var card = btn.closest('.photo-card');
+    if (!card) return;
+
+    var id = card.dataset.id;
+    var act = btn.dataset.act;
+
+    if (act === 'delete') {
+      if (!confirm('確定要刪除這張照片嗎？\n（投影會立刻移除，Drive 檔案也會移到垃圾桶）')) return;
+    }
+
+    card.classList.add('busy');
+
+    var promise;
+    if (act === 'delete') {
+      promise = API.remove(token, id).then(function () { toast('已刪除', 'ok'); });
+    } else {
+      promise = API.review(token, id, act).then(function () {
+        toast(act === 'approve' ? '已通過，正在上牆 ✨' : act === 'reject' ? '已退回' : '已下架', 'ok');
+      });
+    }
+
+    promise.then(function () {
+      return loadAll();
+    }).catch(function (err) {
+      card.classList.remove('busy');
+      toast('操作失敗：' + err.message, 'err');
+    });
+  }
+
+  el.pendingList.addEventListener('click', handleCardClick);
+  el.approvedList.addEventListener('click', handleCardClick);
+
+  /* ---------- 播放開關 ---------- */
+  el.swPlayback.addEventListener('click', function () {
+    if (state.busy) return;
+    state.busy = true;
+    el.swPlayback.classList.add('busy');
+
+    var next = state.playback === 'paused' ? 'playing' : 'paused';
+    API.setPlayback(token, next).then(function (res) {
+      applySwitches(res.playback, state.reviewMode);
+      toast(next === 'paused' ? '已暫停（所有端同步）' : '已恢復播放', 'ok');
+    }).catch(function (err) {
+      toast('切換失敗：' + err.message, 'err');
+    }).then(function () {
+      state.busy = false;
+      el.swPlayback.classList.remove('busy');
+    });
+  });
+
+  /* ---------- 免審核開關 ---------- */
+  el.swReviewMode.addEventListener('click', function () {
+    if (state.busy) return;
+
+    var next = state.reviewMode === 'auto' ? 'manual' : 'auto';
+
+    if (next === 'auto') {
+      var n = state.pending.filter(function (p) { return p.status === 'pending'; }).length;
+      var msg = '開啟免審核模式後，賓客照片會直接上牆。';
+      if (n > 0) msg += '\n\n目前有 ' + n + ' 張待審照片，也會一併放行。';
+      msg += '\n\n確定要開啟嗎？';
+      if (!confirm(msg)) return;
+    }
+
+    state.busy = true;
+    el.swReviewMode.classList.add('busy');
+
+    API.setReviewMode(token, next).then(function (res) {
+      applySwitches(state.playback, res.reviewMode);
+      if (res.released) toast('已開啟免審核，並放行 ' + res.released + ' 張', 'ok');
+      else toast(next === 'auto' ? '已開啟免審核模式' : '已關閉免審核模式', 'ok');
+      return loadAll();
+    }).catch(function (err) {
+      toast('切換失敗：' + err.message, 'err');
+    }).then(function () {
+      state.busy = false;
+      el.swReviewMode.classList.remove('busy');
+    });
+  });
+
+  /* ---------- 跑馬燈 ---------- */
+  el.announceBtn.addEventListener('click', function () {
+    var text = el.announceInput.value.trim();
+    API.setAnnouncement(token, text).then(function () {
+      toast(text ? '跑馬燈已更新' : '跑馬燈已關閉', 'ok');
+    }).catch(function (err) {
+      toast('設定失敗：' + err.message, 'err');
+    });
+  });
+
+  /* ---------- 其他按鈕 ---------- */
+  el.refreshBtn.addEventListener('click', function () {
+    el.refreshBtn.disabled = true;
+    loadAll().then(function () {
+      toast('已更新', 'ok');
+    }).catch(function () {
+      toast('更新失敗', 'err');
+    }).then(function () {
+      el.refreshBtn.disabled = false;
+    });
+  });
+
+  el.openProjector.addEventListener('click', function () {
+    window.open('../index.html', '_blank');
+  });
+
+  /* ---------- 自動輪詢（每 15 秒） ---------- */
+  function startPolling() {
+    clearInterval(state.timer);
+    state.timer = setInterval(function () {
+      if (document.hidden || !token) return;
+      loadAll().catch(function () { /* 靜默失敗，下一輪再試 */ });
+    }, 15000);
+  }
+
+  /* ---------- 啟動 ---------- */
+  function boot() {
+    if (!API.isConfigured()) {
+      showGate('尚未設定 API_URL，請先編輯 config.js');
+      el.gateBtn.disabled = true;
+      return;
+    }
+
+    var saved = '';
+    try { saved = localStorage.getItem(TOKEN_KEY) || ''; } catch (e) {}
+
+    // 若 config.js 已填好 admin token，優先使用
+    var preset = cfg.TOKEN_ADMIN && cfg.TOKEN_ADMIN.indexOf('PASTE_') === -1 ? cfg.TOKEN_ADMIN : '';
+
+    var candidate = saved || preset;
+    if (candidate) {
+      tryToken(candidate).then(startPolling).catch(function () {
+        showGate('');
+        el.tokenInput.value = '';
+      });
+    } else {
+      showGate('');
+    }
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>

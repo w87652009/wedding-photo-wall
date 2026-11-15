@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0f0a16">
+<title>婚禮照片牆 · 審核端</title>
+<link rel="stylesheet" href="../assets/style.css">
+<style>
+  /* 審核端：單欄大卡片，手機好按 */
+  .review-list { display: flex; flex-direction: column; gap: 14px; }
+
+  .review-card {
+    background: linear-gradient(160deg, var(--card), var(--card-2));
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    overflow: hidden;
+    transition: opacity .2s ease, transform .2s ease;
+  }
+  .review-card.busy { opacity: .45; pointer-events: none; }
+  .review-card.leaving { transform: translateX(60px); opacity: 0; }
+
+  .review-card .pic {
+    width: 100%; max-height: 46vh;
+    background: #120c1a;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+  }
+  .review-card .pic img {
+    width: 100%; height: auto; max-height: 46vh;
+    object-fit: contain; display: block;
+  }
+
+  .review-card .info { padding: 14px 16px 16px; }
+
+  .review-card .bless {
+    font-size: 15px; line-height: 1.65;
+    margin-bottom: 8px;
+    word-break: break-word;
+  }
+  .review-card .signer {
+    font-size: 13px; color: var(--pink);
+    margin-bottom: 4px;
+  }
+  .review-card .time {
+    font-size: 11.5px; color: var(--muted);
+    margin-bottom: 14px;
+  }
+
+  .review-card .acts { display: flex; gap: 10px; }
+  .review-card .acts .btn { flex: 1; min-height: 50px; font-size: 15px; }
+
+  .queue-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin: 4px 0 16px;
+  }
+  .queue-head .big {
+    font-size: 30px; font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    background: linear-gradient(120deg, var(--pink), var(--violet));
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .queue-head .lbl { font-size: 12px; color: var(--muted); letter-spacing: .1em; }
+
+  .hint-bar {
+    display: flex; align-items: center; gap: 9px;
+    padding: 11px 14px; margin-bottom: 16px;
+    background: rgba(255, 209, 102, .08);
+    border: 1px solid rgba(255, 209, 102, .22);
+    border-radius: 12px;
+    font-size: 12.5px; color: rgba(255, 232, 190, .9);
+    line-height: 1.6;
+  }
+</style>
+</head>
+<body>
+
+<!-- ===== 登入 ===== -->
+<div class="gate" id="gate">
+  <div class="box">
+    <h1>💍 審核端</h1>
+    <p>伴娘與伴郎專用<br>只能審核通過或退回照片</p>
+    <input type="password" id="tokenInput" placeholder="請輸入審核端存取碼" autocomplete="current-password">
+    <div class="err" id="gateErr"></div>
+    <button class="btn primary block" id="gateBtn">開始審核</button>
+  </div>
+</div>
+
+<!-- ===== 主畫面 ===== -->
+<div class="topbar">
+  <div class="brand">
+    <div class="logo">💍</div>
+    <div>
+      審核端
+      <small>REVIEW QUEUE</small>
+    </div>
+  </div>
+  <div class="status-pill" id="statusPill">
+    <span class="dot" id="statusDot"></span>
+    <span id="statusText">連線中</span>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <div class="queue-head">
+    <div>
+      <div class="big" id="queueCount">–</div>
+      <div class="lbl">張待審照片</div>
+    </div>
+    <button class="btn sm" id="refreshBtn">↻ 更新</button>
+  </div>
+
+  <div class="hint-bar" id="hintBar">
+    <span>💡</span>
+    <span>看到喜歡的就按「通過」，照片會立刻上大螢幕。有疑慮就按「退回」，新人可以再處理。</span>
+  </div>
+
+  <div class="review-list" id="list"></div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="../config.js"></script>
+<script src="../assets/api.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var cfg = window.APP_CONFIG || {};
+  var API = window.WeddingAPI;
+  var TOKEN_KEY = 'wedding_reviewer_token';
+
+  var token = '';
+  var items = [];
+  var timer = null;
+  var busy = false;
+
+  var el = {
+    gate: document.getElementById('gate'),
+    gateBtn: document.getElementById('gateBtn'),
+    gateErr: document.getElementById('gateErr'),
+    tokenInput: document.getElementById('tokenInput'),
+    statusDot: document.getElementById('statusDot'),
+    statusText: document.getElementById('statusText'),
+    queueCount: document.getElementById('queueCount'),
+    list: document.getElementById('list'),
+    refreshBtn: document.getElementById('refreshBtn'),
+    hintBar: document.getElementById('hintBar'),
+    toast: document.getElementById('toast')
+  };
+
+  var toastTimer = null;
+  function toast(msg, type) {
+    el.toast.textContent = msg;
+    el.toast.className = 'toast show' + (type ? ' ' + type : '');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.toast.className = 'toast'; }, 2400);
+  }
+
+  function setStatus(ok, text) {
+    el.statusDot.className = 'dot' + (ok ? '' : ' off');
+    el.statusText.textContent = text;
+  }
+
+  /* ---------- 登入 ---------- */
+  function showGate(msg) {
+    el.gate.classList.remove('hidden');
+    el.gateErr.textContent = msg || '';
+  }
+
+  function tryToken(t) {
+    return API.getPending(t, false).then(function (res) {
+      token = t;
+      try { localStorage.setItem(TOKEN_KEY, t); } catch (e) {}
+      el.gate.classList.add('hidden');
+      applyData(res);
+      return res;
+    });
+  }
+
+  el.gateBtn.addEventListener('click', function () {
+    var t = el.tokenInput.value.trim();
+    if (!t) { el.gateErr.textContent = '請輸入存取碼'; return; }
+    el.gateBtn.disabled = true;
+    el.gateErr.textContent = '';
+    tryToken(t).then(function () {
+      el.gateBtn.disabled = false;
+      startPolling();
+    }).catch(function () {
+      el.gateErr.textContent = '存取碼錯誤或後端未連線';
+      el.gateBtn.disabled = false;
+    });
+  });
+
+  el.tokenInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') el.gateBtn.click();
+  });
+
+  /* ---------- 資料 ---------- */
+  function applyData(res) {
+    setStatus(true, '已連線');
+    items = (res.items || []).filter(function (p) { return p.status === 'pending'; });
+    render();
+  }
+
+  function load() {
+    if (!token) return Promise.resolve();
+    return API.getPending(token, false).then(applyData).catch(function (err) {
+      setStatus(false, '連線失敗');
+      throw err;
+    });
+  }
+
+  /* ---------- 渲染 ---------- */
+  function render() {
+    el.queueCount.textContent = items.length;
+
+    if (!items.length) {
+      el.list.innerHTML =
+        '<div class="empty"><div class="icon">🎉</div>' +
+        '<div class="t">全部審完了！</div>' +
+        '<div class="d">新照片進來會自動出現在這裡<br>可以稍微休息一下 ☕</div></div>';
+      return;
+    }
+
+    var html = '';
+    items.forEach(function (p) {
+      html +=
+        '<div class="review-card" data-id="' + API.esc(p.id) + '">' +
+          '<div class="pic">' +
+            '<img src="' + API.esc(p.url || p.fallbackUrl) + '" alt="" loading="lazy" ' +
+                 'onerror="this.src=\'' + API.esc(p.fallbackUrl || '') + '\'">' +
+          '</div>' +
+          '<div class="info">' +
+            '<div class="bless">' + API.esc(p.message || '（無祝福文字）') + '</div>' +
+            '<div class="signer">— ' + API.esc(p.signer || '未署名') + '</div>' +
+            '<div class="time">' + API.timeAgo(p.createdAt) + '　·　#' + p.seq + '</div>' +
+            '<div class="acts">' +
+              '<button class="btn green" data-act="approve">✓ 通過</button>' +
+              '<button class="btn red" data-act="reject">✕ 退回</button>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+    });
+    el.list.innerHTML = html;
+  }
+
+  /* ---------- 操作 ---------- */
+  el.list.addEventListener('click', function (e) {
+    var btn = e.target.closest('button[data-act]');
+    if (!btn || busy) return;
+
+    var card = btn.closest('.review-card');
+    if (!card) return;
+
+    var id = card.dataset.id;
+    var act = btn.dataset.act;
+
+    busy = true;
+    card.classList.add('busy');
+
+    API.review(token, id, act).then(function () {
+      card.classList.add('leaving');
+      toast(act === 'approve' ? '已通過，正在上牆 ✨' : '已退回', 'ok');
+
+      // 從清單移除，不用等重新載入
+      items = items.filter(function (p) { return p.id !== id; });
+      setTimeout(function () {
+        card.remove();
+        el.queueCount.textContent = items.length;
+        if (!items.length) render();
+      }, 260);
+    }).catch(function (err) {
+      card.classList.remove('busy');
+      toast('操作失敗：' + err.message, 'err');
+    }).then(function () {
+      busy = false;
+    });
+  });
+
+  el.refreshBtn.addEventListener('click', function () {
+    el.refreshBtn.disabled = true;
+    load().then(function () {
+      toast('已更新', 'ok');
+    }).catch(function () {
+      toast('更新失敗', 'err');
+    }).then(function () {
+      el.refreshBtn.disabled = false;
+    });
+  });
+
+  /* ---------- 輪詢（每 12 秒） ---------- */
+  function startPolling() {
+    clearInterval(timer);
+    timer = setInterval(function () {
+      if (document.hidden || !token || busy) return;
+      load().catch(function () {});
+    }, 12000);
+  }
+
+  /* ---------- 啟動 ---------- */
+  function boot() {
+    if (!API.isConfigured()) {
+      showGate('尚未設定 API_URL，請先編輯 config.js');
+      el.gateBtn.disabled = true;
+      return;
+    }
+
+    var saved = '';
+    try { saved = localStorage.getItem(TOKEN_KEY) || ''; } catch (e) {}
+
+    var preset = cfg.TOKEN_REVIEWER && cfg.TOKEN_REVIEWER.indexOf('PASTE_') === -1 ? cfg.TOKEN_REVIEWER : '';
+    var candidate = saved || preset;
+
+    if (candidate) {
+      tryToken(candidate).then(startPolling).catch(function () {
+        showGate('');
+      });
+    } else {
+      showGate('');
+    }
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>
